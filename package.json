@@ -1,0 +1,19 @@
+{
+  "name": "basel-bus-tracker",
+  "version": "0.1.0",
+  "description": "Prototype: estimated live positions of Basel BVB/BLT trams and buses on a map, from GTFS schedule + GTFS-RT trip delays",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "prepare-gtfs": "node src/prepareGtfs.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "gtfs-realtime-bindings": "^1.1.1"
+  }
+}
