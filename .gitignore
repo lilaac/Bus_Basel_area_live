@@ -1,4 +1,10 @@
 node_modules/
 .env
-data/
 *.log
+
+# The raw national GTFS zip (~240MB, redownloaded via README instructions)
+# and the scratch extraction dir are excluded — but the small *prepared*
+# Basel-only dataset (basel-gtfs.json + basel-stoptimes.ndjson) IS
+# committed below so the deployed server doesn't need to regenerate it.
+data/gtfs.zip
+data/gtfs-extracted/

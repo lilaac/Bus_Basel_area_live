@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: basel-bus-tracker
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: OTD_API_KEY
+        sync: false

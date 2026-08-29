@@ -34,9 +34,13 @@ npm install
 npm run prepare-gtfs
 ```
 
-This filters the national GTFS down to just BVB/BLT routes/trips/stops and
-writes `data/basel-gtfs.json`. Re-run this whenever you download a fresh
-`gtfs.zip`.
+This filters the national GTFS down to just BVB/BLT routes/trips/stops
+active in the next 10 days (see "Known limitations" below for why it's a
+rolling window, not the full year) and writes `data/basel-gtfs.json` +
+`data/basel-stoptimes.ndjson`. Re-run this whenever you download a fresh
+`gtfs.zip`, and periodically (at least every ~10 days) to keep the window
+current — commit the two output files afterward if you're running a
+deployed copy (see below).
 
 ### 4. Run it
 
@@ -45,20 +49,55 @@ npm start
 ```
 
 Open http://localhost:3000 — you should see markers moving along Basel's
-tram/bus routes, estimated from schedule + live delay.
+tram/bus routes, estimated from schedule + live delay. Click the "Line"
+dropdown top-left to filter to a single route; hover a marker for its
+direction and current delay.
+
+## Deploying (to share a public link)
+
+The repo already includes a prepared `data/basel-gtfs.json` +
+`data/basel-stoptimes.ndjson` (small enough to commit directly — see
+"Known limitations" for why they're a rolling window, not the full year),
+so a host just needs to `npm install && npm start` — no need to re-run
+`prepare-gtfs` on the server itself.
+
+Using [Render](https://render.com) (free tier, no credit card required):
+
+1. Create a Render account and connect your GitHub.
+2. New → Blueprint → pick this repo (it'll pick up `render.yaml`
+   automatically) — or New → Web Service if you'd rather configure by hand
+   (build command `npm install`, start command `npm start`).
+3. When prompted, set the `OTD_API_KEY` environment variable to your key.
+4. Deploy. You'll get a public URL like `https://basel-bus-tracker.onrender.com`.
+
+Free-tier services sleep after 15 minutes idle and take a few seconds to
+wake on the next visit — fine for an occasional-use demo link.
+
+**Remember to refresh the data periodically** (re-run `npm run
+prepare-gtfs` locally, commit the two output files, push) or the map will
+stop showing vehicles once the rolling window expires.
 
 ## How it works
 
 - `src/prepareGtfs.js` — filters the national static GTFS zip to Basel-area
-  (BVB/BLT) data only.
-- `src/gtfsRealtime.js` — polls the GTFS-RT TripUpdates feed (rate-limited
-  to 2 requests/minute by the provider; we poll every 40s).
+  (BVB/BLT) data only, narrowed to a rolling window of upcoming days to
+  keep memory usage low on a free host.
+- `src/gtfsStatic.js` — loads that data at startup; stop_times (by far the
+  largest part) is stream-parsed line-by-line (NDJSON) rather than one big
+  `JSON.parse()`, which otherwise leaves several times the data's actual
+  size resident in memory even after garbage collection.
+- `src/gtfsRealtime.js` — fetches the GTFS-RT TripUpdates feed (rate-limited
+  to 2 requests/minute by the provider).
 - `src/interpolate.js` — for each currently-active trip, finds which pair of
   scheduled stops "now" falls between (adjusted for live delay) and
   linearly interpolates a position between them.
-- `src/server.js` — Express server exposing `GET /api/vehicles` and serving
-  the frontend.
-- `public/` — Leaflet map that polls `/api/vehicles` every 5s.
+- `src/server.js` — Express server exposing `GET /api/vehicles` and
+  `GET /api/routes`, polling the realtime feed on demand (per request,
+  rate-limited) rather than on a background timer, since free-tier hosts
+  suspend the process between requests when idle.
+- `public/` — Leaflet map that polls `/api/vehicles` every 5s, with a
+  route-badge per vehicle, a hover tooltip (direction + delay), and a line
+  filter dropdown backed by `/api/routes`.
 
 ## Known limitations (it's a prototype)
 
@@ -68,3 +107,7 @@ tram/bus routes, estimated from schedule + live delay.
   shape.
 - No vehicle-to-vehicle disambiguation if a trip briefly has no active
   service.
+- Only a rolling window of upcoming days is kept (`WINDOW_DAYS` in
+  `prepareGtfs.js`, default 10) rather than the full year — the full year
+  is ~750MB in memory, too much for a free hosting tier's 512MB limit.
+  Regenerate periodically to keep the window current.
