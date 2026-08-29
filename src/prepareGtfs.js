@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import AdmZip from 'adm-zip';
+import { execFileSync } from 'node:child_process';
 import { parse } from 'csv-parse';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,7 +20,7 @@ function parseCsvFile(filePath, onRecord) {
   return new Promise((resolve, reject) => {
     const parser = fs
       .createReadStream(filePath)
-      .pipe(parse({ columns: true, skip_empty_lines: true, relax_column_count: true }));
+      .pipe(parse({ columns: true, skip_empty_lines: true, relax_column_count: true, bom: true }));
     parser.on('readable', () => {
       let record;
       while ((record = parser.read()) !== null) onRecord(record);
@@ -41,9 +41,10 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('Extracting GTFS zip...');
+  console.log('Extracting GTFS zip (via system unzip — some entries, like stop_times.txt, exceed the 2GB buffer limit of pure-JS zip libraries)...');
   fs.rmSync(EXTRACT_DIR, { recursive: true, force: true });
-  new AdmZip(ZIP_PATH).extractAllTo(EXTRACT_DIR, true);
+  fs.mkdirSync(EXTRACT_DIR, { recursive: true });
+  execFileSync('unzip', ['-o', '-q', ZIP_PATH, '-d', EXTRACT_DIR], { stdio: 'inherit' });
 
   console.log('Finding Basel agencies...');
   const baselAgencyIds = new Set();
