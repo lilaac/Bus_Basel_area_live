@@ -60,6 +60,13 @@ app.get('/api/vehicles', async (req, res) => {
   res.json({ generatedAt: new Date().toISOString(), vehicles });
 });
 
+app.get('/api/routes', (req, res) => {
+  const routes = [...staticData.routesById.values()]
+    .map((r) => ({ routeShortName: r.route_short_name, routeLongName: r.route_long_name }))
+    .sort((a, b) => a.routeShortName.localeCompare(b.routeShortName, undefined, { numeric: true }));
+  res.json({ routes });
+});
+
 app.listen(PORT, () => {
   console.log(`Basel bus tracker running at http://localhost:${PORT}`);
 });

@@ -12,10 +12,27 @@
       background: rgba(20, 20, 20, 0.85); color: #fff; padding: 6px 14px; border-radius: 6px;
       font: 13px/1.4 -apple-system, sans-serif;
     }
+    #line-filter {
+      position: absolute; z-index: 1000; top: 10px; left: 10px;
+      background: #fff; border-radius: 6px; padding: 6px 8px;
+      font: 13px/1.4 -apple-system, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+    #line-filter select { font: inherit; border: none; }
+    .vehicle-badge {
+      display: flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 50%;
+      background: #1a73e8; color: #fff; border: 2px solid #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      font: 700 11px/1 -apple-system, sans-serif;
+    }
   </style>
 </head>
 <body>
   <div id="banner">Estimated positions from schedule + live delays (not raw GPS) — Basel BVB/BLT</div>
+  <div id="line-filter">
+    <label for="line-select">Line: </label>
+    <select id="line-select"><option value="">All</option></select>
+  </div>
   <div id="map"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="app.js"></script>

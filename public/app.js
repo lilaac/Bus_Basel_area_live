@@ -7,13 +7,46 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
 }).addTo(map);
 
-const markersByTripId = new Map();
+const lineSelect = document.getElementById('line-select');
+let selectedLine = '';
+lineSelect.addEventListener('change', () => {
+  selectedLine = lineSelect.value;
+  refresh();
+});
 
-function markerLabel(vehicle) {
+async function loadRoutes() {
+  try {
+    const res = await fetch('/api/routes');
+    const data = await res.json();
+    for (const route of data.routes) {
+      const option = document.createElement('option');
+      option.value = route.routeShortName;
+      option.textContent = route.routeLongName
+        ? `${route.routeShortName} — ${route.routeLongName}`
+        : route.routeShortName;
+      lineSelect.appendChild(option);
+    }
+  } catch (err) {
+    console.error('Failed to load route list', err);
+  }
+}
+
+function badgeIcon(routeShortName) {
+  return L.divIcon({
+    className: '',
+    html: `<div class="vehicle-badge">${routeShortName || '?'}</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  });
+}
+
+function tooltipText(vehicle) {
   const delayMin = Math.round(vehicle.delaySeconds / 60);
   const delayText = delayMin === 0 ? 'on time' : delayMin > 0 ? `+${delayMin} min` : `${delayMin} min`;
-  return `Route ${vehicle.routeShortName || '?'} → ${vehicle.headsign || ''} (${delayText})`;
+  return `Line ${vehicle.routeShortName || '?'} → ${vehicle.headsign || ''}<br>${delayText}`;
 }
+
+const markersByTripId = new Map();
 
 async function refresh() {
   let data;
@@ -25,19 +58,23 @@ async function refresh() {
     return;
   }
 
+  const visible = selectedLine
+    ? data.vehicles.filter((v) => v.routeShortName === selectedLine)
+    : data.vehicles;
+
   const seenTripIds = new Set();
-  for (const vehicle of data.vehicles) {
+  for (const vehicle of visible) {
     seenTripIds.add(vehicle.tripId);
     const latLng = [vehicle.lat, vehicle.lon];
     let marker = markersByTripId.get(vehicle.tripId);
     if (!marker) {
-      marker = L.circleMarker(latLng, { radius: 7, color: '#1a73e8', fillColor: '#1a73e8', fillOpacity: 0.85 });
+      marker = L.marker(latLng, { icon: badgeIcon(vehicle.routeShortName) });
       marker.addTo(map);
       markersByTripId.set(vehicle.tripId, marker);
     } else {
       marker.setLatLng(latLng);
     }
-    marker.bindTooltip(markerLabel(vehicle));
+    marker.bindTooltip(tooltipText(vehicle));
   }
 
   for (const [tripId, marker] of markersByTripId) {
@@ -48,5 +85,6 @@ async function refresh() {
   }
 }
 
+loadRoutes();
 refresh();
 setInterval(refresh, POLL_INTERVAL_MS);
