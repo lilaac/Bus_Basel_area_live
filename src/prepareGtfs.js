@@ -13,8 +13,35 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const ZIP_PATH = path.join(DATA_DIR, 'gtfs.zip');
 const EXTRACT_DIR = path.join(DATA_DIR, 'gtfs-extracted');
 const OUTPUT_PATH = path.join(DATA_DIR, 'basel-gtfs.json');
+const STOP_TIMES_PATH = path.join(DATA_DIR, 'basel-stoptimes.ndjson');
 
 const AGENCY_NAME_PATTERN = /BVB|Basler Verkehrs|BLT|Baselland Transport/i;
+
+// Full-year national trip data is ~750MB parsed in memory — too big for a
+// free hosting tier. We only ever need "today"/"yesterday"'s trips at
+// runtime (see interpolate.js), so keep just a rolling window and
+// regenerate periodically (see README).
+const WINDOW_DAYS = 10;
+const WEEKDAY_FIELDS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+
+function formatDateYYYYMMDD(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+function isServiceActiveOnDate(serviceId, dateObj, calendarByService, exceptionsByKey) {
+  const dateStr = formatDateYYYYMMDD(dateObj);
+  const exception = exceptionsByKey.get(`${serviceId}|${dateStr}`);
+  if (exception === '1') return true;
+  if (exception === '2') return false;
+
+  const cal = calendarByService.get(serviceId);
+  if (!cal) return false;
+  if (dateStr < cal.start_date || dateStr > cal.end_date) return false;
+  return cal[WEEKDAY_FIELDS[dateObj.getDay()]] === '1';
+}
 
 function parseCsvFile(filePath, onRecord) {
   return new Promise((resolve, reject) => {
@@ -87,7 +114,44 @@ async function main() {
       });
     }
   });
-  console.log(`${trips.size} Basel trips`);
+  console.log(`${trips.size} Basel trips (full year)`);
+
+  const allUsedServiceIds = new Set([...trips.values()].map((t) => t.service_id));
+
+  console.log('Filtering calendar / calendar_dates...');
+  const calendarByService = new Map();
+  const calendarPath = path.join(EXTRACT_DIR, 'calendar.txt');
+  if (fs.existsSync(calendarPath)) {
+    await parseCsvFile(calendarPath, (row) => {
+      if (allUsedServiceIds.has(row.service_id)) calendarByService.set(row.service_id, row);
+    });
+  }
+  const exceptionsByKey = new Map();
+  const calendarDatesPath = path.join(EXTRACT_DIR, 'calendar_dates.txt');
+  if (fs.existsSync(calendarDatesPath)) {
+    await parseCsvFile(calendarDatesPath, (row) => {
+      if (allUsedServiceIds.has(row.service_id)) {
+        exceptionsByKey.set(`${row.service_id}|${row.date}`, row.exception_type);
+      }
+    });
+  }
+
+  console.log(`Narrowing trips to the next ${WINDOW_DAYS} days (rolling window)...`);
+  const windowActiveServiceIds = new Set();
+  const today = new Date();
+  for (let i = 0; i < WINDOW_DAYS; i++) {
+    const date = new Date(today.getTime() + i * 86400000);
+    for (const serviceId of allUsedServiceIds) {
+      if (windowActiveServiceIds.has(serviceId)) continue;
+      if (isServiceActiveOnDate(serviceId, date, calendarByService, exceptionsByKey)) {
+        windowActiveServiceIds.add(serviceId);
+      }
+    }
+  }
+  for (const [tripId, trip] of trips) {
+    if (!windowActiveServiceIds.has(trip.service_id)) trips.delete(tripId);
+  }
+  console.log(`${trips.size} Basel trips active in the next ${WINDOW_DAYS} days`);
 
   console.log('Filtering stop_times (largest file, may take a while)...');
   const stopTimesByTrip = new Map();
@@ -120,29 +184,23 @@ async function main() {
     }
   });
 
-  const usedServiceIds = new Set([...trips.values()].map((t) => t.service_id));
-
-  console.log('Filtering calendar / calendar_dates...');
-  const calendar = [];
-  const calendarPath = path.join(EXTRACT_DIR, 'calendar.txt');
-  if (fs.existsSync(calendarPath)) {
-    await parseCsvFile(calendarPath, (row) => {
-      if (usedServiceIds.has(row.service_id)) calendar.push(row);
-    });
-  }
+  // Narrow the already-filtered calendar data down to just the service_ids
+  // that survived the rolling-window trip filter above.
+  const calendar = [...calendarByService.values()].filter((c) => windowActiveServiceIds.has(c.service_id));
   const calendarDates = [];
-  const calendarDatesPath = path.join(EXTRACT_DIR, 'calendar_dates.txt');
-  if (fs.existsSync(calendarDatesPath)) {
-    await parseCsvFile(calendarDatesPath, (row) => {
-      if (usedServiceIds.has(row.service_id)) calendarDates.push(row);
-    });
+  for (const [key, exceptionType] of exceptionsByKey) {
+    const serviceId = key.slice(0, key.indexOf('|'));
+    if (windowActiveServiceIds.has(serviceId)) {
+      calendarDates.push({ service_id: serviceId, date: key.slice(key.indexOf('|') + 1), exception_type: exceptionType });
+    }
   }
 
+  const windowEnd = new Date(today.getTime() + (WINDOW_DAYS - 1) * 86400000);
   const output = {
     generatedAt: new Date().toISOString(),
+    windowEndDate: formatDateYYYYMMDD(windowEnd),
     routes: [...routes.values()],
     trips: [...trips.values()],
-    stopTimesByTrip: Object.fromEntries(stopTimesByTrip),
     stops: Object.fromEntries(stops),
     calendar,
     calendarDates,
@@ -150,6 +208,19 @@ async function main() {
 
   fs.writeFileSync(OUTPUT_PATH, JSON.stringify(output));
   console.log(`Wrote ${OUTPUT_PATH} (${(fs.statSync(OUTPUT_PATH).size / 1024 / 1024).toFixed(1)} MB)`);
+
+  // stop_times is by far the largest section (millions of rows). Writing it
+  // as one line per trip (NDJSON) lets the server stream-parse it at
+  // startup instead of one giant JSON.parse() — a single big parse leaves
+  // V8 holding onto ~3x the peak memory even after GC, which is what was
+  // blowing past a 512MB free-hosting-tier limit.
+  const stopTimesStream = fs.createWriteStream(STOP_TIMES_PATH);
+  for (const [tripId, stops_] of stopTimesByTrip) {
+    stopTimesStream.write(JSON.stringify({ trip_id: tripId, stops: stops_ }) + '\n');
+  }
+  stopTimesStream.end();
+  await new Promise((resolve) => stopTimesStream.on('finish', resolve));
+  console.log(`Wrote ${STOP_TIMES_PATH} (${(fs.statSync(STOP_TIMES_PATH).size / 1024 / 1024).toFixed(1)} MB)`);
 
   console.log('Cleaning up extracted files...');
   fs.rmSync(EXTRACT_DIR, { recursive: true, force: true });

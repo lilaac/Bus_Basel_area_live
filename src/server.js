@@ -19,29 +19,43 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const staticData = loadStaticGtfs();
+const staticData = await loadStaticGtfs();
 console.log(
   `Loaded static GTFS (generated ${staticData.generatedAt}): ` +
     `${staticData.routesById.size} routes, ${staticData.tripsById.size} trips`
 );
 
 let delaysByTripId = new Map();
+let lastPolledAt = 0;
+let inFlightPoll = null;
 
-async function pollRealtime() {
-  try {
-    delaysByTripId = await fetchTripDelays(API_KEY);
-    console.log(`Polled GTFS-RT: delay info for ${delaysByTripId.size} trips`);
-  } catch (err) {
-    console.error('GTFS-RT poll failed:', err.message);
-  }
+// Refresh on demand (triggered by an incoming request) rather than on a
+// background setInterval: free-tier hosts suspend the process between
+// requests when idle, which would silently stop a background timer.
+async function ensureFreshDelays() {
+  if (Date.now() - lastPolledAt < REALTIME_POLL_INTERVAL_MS) return;
+  if (inFlightPoll) return inFlightPoll;
+
+  inFlightPoll = fetchTripDelays(API_KEY)
+    .then((delays) => {
+      delaysByTripId = delays;
+      lastPolledAt = Date.now();
+      console.log(`Polled GTFS-RT: delay info for ${delaysByTripId.size} trips`);
+    })
+    .catch((err) => {
+      console.error('GTFS-RT poll failed:', err.message);
+    })
+    .finally(() => {
+      inFlightPoll = null;
+    });
+  return inFlightPoll;
 }
-pollRealtime();
-setInterval(pollRealtime, REALTIME_POLL_INTERVAL_MS);
 
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-app.get('/api/vehicles', (req, res) => {
+app.get('/api/vehicles', async (req, res) => {
+  await ensureFreshDelays();
   const vehicles = computeVehiclePositions(new Date(), staticData, delaysByTripId);
   res.json({ generatedAt: new Date().toISOString(), vehicles });
 });
