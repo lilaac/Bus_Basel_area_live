@@ -20,8 +20,11 @@ const AGENCY_NAME_PATTERN = /BVB|Basler Verkehrs|BLT|Baselland Transport/i;
 // Full-year national trip data is ~750MB parsed in memory — too big for a
 // free hosting tier. We only ever need "today"/"yesterday"'s trips at
 // runtime (see interpolate.js), so keep just a rolling window and
-// regenerate periodically (see README).
-const WINDOW_DAYS = 10;
+// regenerate periodically (see README). 90 days keeps the stop_times
+// NDJSON around ~160MB — fine under Git LFS, but well over GitHub's
+// 100MB hard per-file limit for a normally-committed file, so
+// data/basel-stoptimes.ndjson must stay tracked via `git lfs track`.
+const WINDOW_DAYS = 45;
 const WEEKDAY_FIELDS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 function formatDateYYYYMMDD(date) {

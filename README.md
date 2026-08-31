@@ -29,16 +29,22 @@ must be downloaded manually (no stable direct-download URL):
 
 ### 3. Build the filtered Basel dataset
 
+This repo uses [Git LFS](https://git-lfs.com) for the large output file
+(`data/basel-stoptimes.ndjson`, ~125MB — over GitHub's 100MB per-file
+limit for a normal commit). Install it once (`brew install git-lfs && git
+lfs install`) before cloning/pulling, otherwise you'll get a small pointer
+file instead of the real data.
+
 ```
 npm install
 npm run prepare-gtfs
 ```
 
 This filters the national GTFS down to just BVB/BLT routes/trips/stops
-active in the next 10 days (see "Known limitations" below for why it's a
+active in the next 45 days (see "Known limitations" below for why it's a
 rolling window, not the full year) and writes `data/basel-gtfs.json` +
 `data/basel-stoptimes.ndjson`. Re-run this whenever you download a fresh
-`gtfs.zip`, and periodically (at least every ~10 days) to keep the window
+`gtfs.zip`, and periodically (at least every ~45 days) to keep the window
 current — commit the two output files afterward if you're running a
 deployed copy (see below).
 
@@ -108,6 +114,12 @@ stop showing vehicles once the rolling window expires.
 - No vehicle-to-vehicle disambiguation if a trip briefly has no active
   service.
 - Only a rolling window of upcoming days is kept (`WINDOW_DAYS` in
-  `prepareGtfs.js`, default 10) rather than the full year — the full year
+  `prepareGtfs.js`, default 45) rather than the full year — the full year
   is ~750MB in memory, too much for a free hosting tier's 512MB limit.
-  Regenerate periodically to keep the window current.
+  Regenerate periodically (at least every 45 days) to keep the window
+  current. 45 was chosen empirically: trip count (and so memory) jumps in
+  a staircase as new calendar periods enter the window rather than
+  growing smoothly, and 45 days sits right before a jump to a
+  meaningfully larger tier (~63k trips / ~370MB RSS vs. ~81k+ trips /
+  ~420MB+ RSS beyond ~60 days) — so it's close to the best
+  runway-per-MB tradeoff in this dataset, not just a round number.
